@@ -1,0 +1,111 @@
+name: "Autopilot: PR Labeling & Summary"
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label by size and area, post summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+
+            // ---- helpers -----------------------------------------------------------
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+              } catch (e) {
+                if (e.status !== 404) throw e;
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              }
+            }
+
+            async function replacePrefixedLabels(prefix, newNames) {
+              const current = pr.labels.map(l => l.name).filter(n => n.startsWith(prefix));
+              for (const name of current) {
+                if (!newNames.includes(name)) {
+                  try {
+                    await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name });
+                  } catch (e) { /* already gone */ }
+                }
+              }
+              const toAdd = newNames.filter(n => !current.includes(n));
+              if (toAdd.length) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: toAdd });
+              }
+            }
+
+            // ---- gather diff stats ---------------------------------------------------
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number: pr.number, per_page: 100,
+            });
+
+            let additions = 0, deletions = 0;
+            const areas = new Set();
+
+            for (const f of files) {
+              additions += f.additions;
+              deletions += f.deletions;
+              const p = f.filename.toLowerCase();
+              if (p.startsWith('.github/')) areas.add('area/ci');
+              else if (p.includes('test') || p.includes('spec')) areas.add('area/tests');
+              else if (p.endsWith('.md') || p.startsWith('docs/')) areas.add('area/docs');
+              else if (p.match(/\.(json|yml|yaml|toml|ini)$/)) areas.add('area/config');
+              else if (p.startsWith('src/') || p.startsWith('lib/')) areas.add('area/source');
+              else areas.add('area/misc');
+            }
+            if (areas.size === 0) areas.add('area/misc');
+
+            const changed = additions + deletions;
+            let size, sizeColor;
+            if (changed < 10) { size = 'size/XS'; sizeColor = 'c2e0c6'; }
+            else if (changed < 30) { size = 'size/S'; sizeColor = 'a2eeef'; }
+            else if (changed < 100) { size = 'size/M'; sizeColor = 'fef2c0'; }
+            else if (changed < 500) { size = 'size/L'; sizeColor = 'f9d0c4'; }
+            else { size = 'size/XL'; sizeColor = 'f5c6cb'; }
+
+            const areaColors = {
+              'area/ci': '5319e7', 'area/tests': 'd4c5f9', 'area/docs': '0075ca',
+              'area/config': 'fbca04', 'area/source': '1d76db', 'area/misc': 'cccccc',
+            };
+
+            await ensureLabel(size, sizeColor, `Diff of ${changed < 10 ? '<10' : changed < 30 ? '10-29' : changed < 100 ? '30-99' : changed < 500 ? '100-499' : '500+'} lines`);
+            for (const a of areas) await ensureLabel(a, areaColors[a], `Touches ${a.replace('area/', '')}`);
+
+            await replacePrefixedLabels('size/', [size]);
+            await replacePrefixedLabels('area/', [...areas]);
+
+            // ---- sticky summary comment ----------------------------------------------
+            const marker = '<!-- pr-autopilot-summary -->';
+            const table = [
+              '| Metric | Value |',
+              '| --- | --- |',
+              `| Files changed | ${files.length} |`,
+              `| Lines added | +${additions} |`,
+              `| Lines removed | -${deletions} |`,
+              `| Size | \`${size}\` |`,
+              `| Areas | ${[...areas].map(a => `\`${a}\``).join(', ')} |`,
+            ].join('\n');
+
+            const body = `${marker}\n### 🤖 Autopilot summary\n\n${table}\n\n<sub>Auto-generated from the diff. Updates on every push.</sub>`;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: pr.number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
+            }

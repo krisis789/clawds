@@ -1,0 +1,65 @@
+name: "Autopilot: Issue Triage"
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Classify and label new issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue = context.payload.issue;
+            const text = `${issue.title}\n${issue.body || ''}`.toLowerCase();
+
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+              } catch (e) {
+                if (e.status !== 404) throw e;
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              }
+            }
+
+            // ---- classify type ---------------------------------------------------------
+            const rules = [
+              { label: 'type/bug', color: 'd73a4a', test: /\b(bug|crash|error|broken|doesn'?t work|exception|traceback)\b/ },
+              { label: 'type/feature', color: 'a2eeef', test: /\b(feature|enhancement|request|would be nice|could we add)\b/ },
+              { label: 'type/docs', color: '0075ca', test: /\b(docs?|documentation|readme|typo)\b/ },
+              { label: 'type/question', color: 'd876e3', test: /\b(question|how do i|how to|is it possible)\b/ },
+            ];
+
+            let type = rules.find(r => r.test.test(text));
+            if (!type) type = { label: 'type/needs-triage', color: 'ededed' };
+            await ensureLabel(type.label, type.color, 'Auto-classified issue type');
+
+            // ---- classify priority -----------------------------------------------------
+            const urgent = /\b(urgent|critical|security|vulnerability|data loss|production down|sev1|p0)\b/.test(text);
+            const priority = urgent
+              ? { label: 'priority/high', color: 'b60205' }
+              : { label: 'priority/normal', color: 'c5def5' };
+            await ensureLabel(priority.label, priority.color, 'Auto-assigned priority');
+
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: issue.number,
+              labels: [type.label, priority.label],
+            });
+
+            // ---- welcome / triage comment ----------------------------------------------
+            const body = [
+              `### 🤖 Triage`,
+              ``,
+              `Auto-labeled as \`${type.label}\` / \`${priority.label}\`.`,
+              urgent ? `\n⚠️ Flagged as high priority based on the issue text — a maintainer should take a look soon.` : '',
+              ``,
+              `<sub>This is an automated triage comment. A maintainer will follow up with more detail.</sub>`,
+            ].filter(Boolean).join('\n');
+
+            await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body });
