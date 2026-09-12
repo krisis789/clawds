@@ -42,3 +42,9 @@ editing constants near the top of the relevant file:
 - Lookback window and digest sections → `weekly-digest.yml`
 
 No build step, no dependency lockfile — edit the YAML, push, done.
+
+## Status
+
+This suite was verified live on this repo: `issue-autopilot.yml` correctly
+labeled a test issue `type/bug` + `priority/high` and posted a triage
+comment within seconds of it being opened. See issue #1 for the transcript.
