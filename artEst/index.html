@@ -147,7 +147,6 @@
   }
   .dropzone:hover, .dropzone:focus-visible { border-color: var(--accent); }
   .dropzone.drag { border-color: var(--accent); background: var(--neutral-bg); }
-  .dropzone.disabled { opacity: .5; cursor: not-allowed; }
   .dz-icon {
     flex: none;
     width: 46px; height: 46px;
@@ -413,6 +412,10 @@
     </div>
     <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp,image/gif">
 
+    <label class="field-label" for="photoDesc" id="photoDescLabel" hidden>Describe the photograph</label>
+    <textarea id="photoDesc" hidden placeholder="e.g. Black-and-white, a lone figure crossing a rain-slicked street at night, strong reflections, high contrast. Clean darkroom print, no visible foxing or creasing."></textarea>
+    <p class="hint" id="photoDescHint" hidden>Image analysis isn't available in this view — describe the subject, composition, tone/color, and apparent condition instead.</p>
+
     <label class="field-label" for="bio">Artist bio</label>
     <textarea id="bio" placeholder="e.g. Self-taught street photographer based in Queens, shooting since 2014. Two-person show at a local gallery in 2022; work featured in a regional arts magazine. No prior sales history."></textarea>
     <p class="hint">Exhibitions, representation, collections, awards, press, prior sales — whatever the seller knows.</p>
@@ -477,6 +480,7 @@
   const $ = (id) => document.getElementById(id);
   const lotNoEl = $('lotNo'), lotDateEl = $('lotDate');
   const dropzone = $('dropzone'), fileInput = $('fileInput'), dzIcon = $('dzIcon'), dzTitle = $('dzTitle'), dzHint = $('dzHint');
+  const photoDescLabel = $('photoDescLabel'), photoDescEl = $('photoDesc'), photoDescHint = $('photoDescHint');
   const bioEl = $('bio'), workTitleEl = $('workTitle'), yearEl = $('year'), editionEl = $('edition'), mediumEl = $('medium'), widthEl = $('width'), heightEl = $('height');
   const appraiseBtn = $('appraiseBtn'), stopRow = $('stopRow'), stopBtn = $('stopBtn');
   const ticket = $('ticket'), ticketTag = $('ticketTag'), noSample = $('noSample');
@@ -495,7 +499,8 @@
   }
 
   function updateButton() {
-    const ready = !!sample && !!bioEl.value.trim() && (!imagesOK || !!selectedFile);
+    const photoReady = imagesOK ? !!selectedFile : !!photoDescEl.value.trim();
+    const ready = !!sample && !!bioEl.value.trim() && photoReady;
     appraiseBtn.disabled = !ready;
   }
 
@@ -552,14 +557,14 @@
     updateButton();
   }
 
-  dropzone.addEventListener('click', () => { if (imagesOK) fileInput.click(); });
-  dropzone.addEventListener('keydown', (e) => { if (imagesOK && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); fileInput.click(); } });
-  ['dragover'].forEach((ev) => dropzone.addEventListener(ev, (e) => { if (!imagesOK) return; e.preventDefault(); dropzone.classList.add('drag'); }));
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+  ['dragover'].forEach((ev) => dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach((ev) => dropzone.addEventListener(ev, () => dropzone.classList.remove('drag')));
-  dropzone.addEventListener('drop', (e) => { if (!imagesOK) return; e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); });
+  dropzone.addEventListener('drop', (e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); });
   fileInput.addEventListener('change', () => { const f = fileInput.files?.[0]; if (f) handleFile(f); });
 
-  [bioEl].forEach((el) => el.addEventListener('input', updateButton));
+  [bioEl, photoDescEl].forEach((el) => el.addEventListener('input', updateButton));
 
   function buildPrompt() {
     const bio = bioEl.value.trim();
@@ -577,7 +582,9 @@
 
     return `You are an experienced fine-art photography appraiser giving an informal, conversational market-value estimate for a private seller — the kind of rough read a specialist gives at a consignment walk-in, not a signed formal appraisal.
 
-${imagesOK && selectedFile ? 'PHOTOGRAPH: the attached image is the print itself. Assess its apparent composition, technical and print quality, subject matter, and any visible condition issues.' : 'No image is available in this view — base the estimate on the bio and details below only, and keep the range wide to reflect that extra uncertainty.'}
+${imagesOK && selectedFile
+    ? 'PHOTOGRAPH: the attached image is the print itself. Assess its apparent composition, technical and print quality, subject matter, and any visible condition issues.'
+    : `PHOTOGRAPH (described by the seller — image analysis isn't available in this view, so weigh this description instead of pixels, and keep the range a bit wider to reflect that extra uncertainty):\n"""\n${photoDescEl.value.trim()}\n"""`}
 
 ARTIST BIO (as provided by the seller):
 """
@@ -695,9 +702,10 @@ Reply with ONLY a JSON object of this exact shape, no other text:
     const caps = await sample.limits().catch(() => null);
     imagesOK = !!(caps && caps.images);
     if (!imagesOK) {
-      dropzone.classList.add('disabled');
-      dzTitle.textContent = 'Image upload unavailable in this view';
-      dzHint.textContent = 'The estimate will use the bio and details below only';
+      dzHint.textContent = 'Photos aren’t analyzed in this view — attach one for your own reference, and describe it below';
+      photoDescLabel.hidden = false;
+      photoDescEl.hidden = false;
+      photoDescHint.hidden = false;
     } else if (caps.images.mediaTypes && caps.images.mediaTypes.length) {
       fileInput.setAttribute('accept', caps.images.mediaTypes.join(','));
     }
